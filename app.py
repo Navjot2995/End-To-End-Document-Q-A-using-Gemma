@@ -107,6 +107,67 @@ with st.sidebar:
         st.success("Cache cleared successfully!")
 
 # --- Main Content ---
+# Add this at the beginning of your imports
+from streamlit.runtime.scriptrunner import RerunData, RerunException
+
+# Then modify your main() function like this:
+def main():
+    # Initialize app
+    initialize_session_state()
+    animation = load_lottie(LOTTIE_URL)
+    
+    # Sidebar configuration - ADD KEYS TO ALL WIDGETS
+    with st.sidebar:
+        st.title("Configuration")
+        
+        # Theme selector
+        st.session_state.theme = st.radio(
+            "Theme",
+            ["dark", "light"],
+            index=0 if st.session_state.theme == "dark" else 1,
+            key="theme_selector"
+        )
+        
+        # API Key Section
+        with st.expander("🔐 API Settings", expanded=True):
+            st.session_state.user_groq_api_key = st.text_input(
+                "Groq API Key",
+                type="password",
+                value=st.session_state.user_groq_api_key,
+                help="Get your key from https://console.groq.com/keys",
+                key="groq_api_input"
+            )
+        
+        # Document Upload Section
+        with st.expander("📄 Document Upload", expanded=True):
+            uploaded_files = st.file_uploader(
+                "Upload PDFs",
+                type=["pdf"],
+                accept_multiple_files=True,
+                disabled=st.session_state.processing_docs,
+                key="pdf_uploader"
+            )
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                if st.button("Process Documents", 
+                           disabled=not uploaded_files or st.session_state.processing_docs,
+                           key="process_docs_button"):
+                    if process_uploaded_files(uploaded_files):
+                        st.success("Knowledge base created!")
+            
+            with col2:
+                if st.button("Clear Cache", 
+                           type="secondary",
+                           disabled=st.session_state.processing_docs,
+                           key="clear_cache_button"):
+                    st.session_state.vectors = None
+                    if os.path.exists(TEMP_FOLDER):
+                        for f in os.listdir(TEMP_FOLDER):
+                            os.remove(os.path.join(TEMP_FOLDER, f))
+                    raise RerunException(RerunData())
+    
+    # Rest of your main() function remains the same...
 st.header("Ask about your documents...")
 
 # Add your existing chat interface and functionality here
