@@ -44,7 +44,8 @@ def initialize_session_state():
         "vectors": None,
         "embeddings": None,
         "user_groq_api_key": "",
-        "processing_docs": False
+        "processing_docs": False,
+        "theme": "dark"
     }
     for key, value in defaults.items():
         if key not in st.session_state:
@@ -68,26 +69,80 @@ def setup_environment():
         st.stop()
 
 def apply_custom_styling():
-    """Apply custom CSS styling"""
-    st.markdown("""
+    """Apply custom CSS styling with proper color scheme"""
+    theme = st.session_state.theme
+    primary_color = "#3b82f6"  # Blue-500
+    bg_color = "#0f172a" if theme == "dark" else "#ffffff"
+    text_color = "#f8fafc" if theme == "dark" else "#1e293b"
+    border_color = "#1e293b" if theme == "dark" else "#e2e8f0"
+    
+    st.markdown(f"""
     <style>
-    /* Modern styling */
-    .stTextInput>div>div>input, .stTextArea>div>textarea {
+    :root {{
+        --primary: {primary_color};
+        --background: {bg_color};
+        --text: {text_color};
+        --border: {border_color};
+    }}
+    
+    /* Base styling */
+    .stApp {{
+        background-color: var(--background) !important;
+        color: var(--text) !important;
+    }}
+    
+    /* Chat messages */
+    .stChatMessage {{
+        padding: 12px 16px;
+        border-radius: 12px;
+        margin: 8px 0;
+        max-width: 85%;
+    }}
+    
+    .stChatMessage.user {{
+        background-color: var(--primary);
+        color: white;
+        margin-left: auto;
+    }}
+    
+    .stChatMessage.assistant {{
+        background-color: {bg_color};
+        border: 1px solid var(--border);
+        margin-right: auto;
+    }}
+    
+    /* Markdown content */
+    .markdown-content {{
+        color: var(--text) !important;
+    }}
+    
+    .markdown-content a {{
+        color: var(--primary) !important;
+    }}
+    
+    /* Sidebar */
+    [data-testid="stSidebar"] {{
+        background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%) !important;
+    }}
+    
+    /* Inputs */
+    .stTextInput>div>div>input, .stTextArea>div>textarea {{
+        background-color: {"#1e293b" if theme == "dark" else "#ffffff"} !important;
+        color: var(--text) !important;
         border-radius: 12px !important;
         padding: 12px !important;
-    }
-    .stButton>button {
+        border: 1px solid var(--border) !important;
+    }}
+    
+    /* Buttons */
+    .stButton>button {{
+        background-color: var(--primary) !important;
+        color: white !important;
         border-radius: 12px !important;
         padding: 12px 24px !important;
         transition: all 0.3s ease !important;
-    }
-    .stButton>button:hover {
-        transform: translateY(-2px);
-        box-shadow: 0 4px 8px rgba(0,0,0,0.1);
-    }
-    [data-testid="stSidebar"] {
-        background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
-    }
+        border: none !important;
+    }}
     </style>
     """, unsafe_allow_html=True)
 
@@ -153,8 +208,12 @@ def generate_response(user_question: str) -> Tuple[str, str]:
             
             Question: {input}
             
-            Provide a concise, accurate response. If unsure, say "I couldn't find 
-            that information in the documents"."""
+            Provide a concise, accurate response with proper markdown formatting for:
+            - Headers
+            - Lists
+            - Code blocks
+            - Bold/italic text
+            - Links"""
         )
         
         document_chain = create_stuff_documents_chain(llm, prompt)
@@ -169,12 +228,21 @@ def generate_response(user_question: str) -> Tuple[str, str]:
         return None, None
 
 def render_chat_history():
-    """Display the chat conversation"""
-    with st.container(height=500, border=True):
+    """Display the chat conversation with proper markdown rendering"""
+    chat_container = st.container(height=500, border=False)
+    
+    with chat_container:
         for q, a, t in st.session_state.chat_history:
-            st.chat_message("human").markdown(f"**You**: {q}")
-            st.chat_message("ai").markdown(f"**Gemma**: {markdown2.markdown(a)}")
-            st.caption(f"🕒 {t}")
+            # User message
+            with st.chat_message("user"):
+                st.markdown(q)
+                st.caption(t)
+            
+            # AI response with markdown
+            with st.chat_message("assistant"):
+                st.markdown(markdown2.markdown(a), unsafe_allow_html=True)
+                st.caption(t)
+            
             st.divider()
 
 def main():
@@ -186,11 +254,19 @@ def main():
     with st.sidebar:
         st.title("Configuration")
         
+        # Theme selector
+        st.session_state.theme = st.radio(
+            "Theme",
+            ["dark", "light"],
+            index=0 if st.session_state.theme == "dark" else 1
+        )
+        
         # API Key Section
         with st.expander("🔐 API Settings", expanded=True):
             st.session_state.user_groq_api_key = st.text_input(
                 "Groq API Key",
                 type="password",
+                value=st.session_state.user_groq_api_key,
                 help="Get your key from https://console.groq.com/keys"
             )
         
@@ -205,17 +281,23 @@ def main():
             
             col1, col2 = st.columns(2)
             with col1:
-                if st.button("Process Documents", disabled=not uploaded_files):
+                if st.button("Process Documents", 
+                           disabled=not uploaded_files or st.session_state.processing_docs):
                     if process_uploaded_files(uploaded_files):
                         st.success("Knowledge base created!")
             
             with col2:
-                if st.button("Clear Cache", type="secondary"):
+                if st.button("Clear Cache", 
+                           type="secondary",
+                           disabled=st.session_state.processing_docs):
                     st.session_state.vectors = None
                     if os.path.exists(TEMP_FOLDER):
                         for f in os.listdir(TEMP_FOLDER):
                             os.remove(os.path.join(TEMP_FOLDER, f))
                     st.rerun()
+    
+    # Apply theme styling
+    apply_custom_styling()
     
     # Main content area
     st.title("📘 Document Intelligence Assistant")
@@ -242,5 +324,4 @@ def main():
                     st.rerun()
 
 if __name__ == "__main__":
-    apply_custom_styling()
     main()
