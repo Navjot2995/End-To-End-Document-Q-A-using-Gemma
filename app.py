@@ -17,60 +17,31 @@ import requests
 import markdown2
 from dotenv import load_dotenv
 
-# Load environment variables
-load_dotenv()
-
 # Constants
 LOTTIE_URL = "https://lottie.host/f1216edb-4e09-46e5-8f1e-90c367b6fc13/iM4N0EXuvy.json"
 TEMP_FOLDER = "./uploaded_pdfs"
 DEFAULT_MODEL = "gemma2-9b-it"
 
-# --- Secure Key Management ---
+# --- Helper Functions ---
+@st.cache_data(show_spinner=False)
+def load_lottie(url: str) -> Optional[dict]:
+    """Load Lottie animation from URL"""
+    try:
+        res = requests.get(url, timeout=10)
+        return res.json() if res.status_code == 200 else None
+    except Exception:
+        return None
+
 def get_secret(key: str) -> str:
     """Get secret from environment variables or Streamlit secrets"""
     return os.getenv(key) or st.secrets.get(key, "")
 
-# --- Background Image Setup ---
 def get_base64_image(image_path: str) -> str:
     """Convert image to base64 for CSS embedding"""
     with open(image_path, "rb") as image_file:
         return f"data:image/png;base64,{base64.b64encode(image_file.read()).decode()}"
 
-# Initialize Streamlit page config
-st.set_page_config(
-    page_title="Document Intelligence Assistant",
-    layout="wide",
-    page_icon="📘",
-    initial_sidebar_state="expanded"
-)
-
-# --- Custom CSS ---
-custom_css = """
-<style>
-    .stApp {
-        background-color: #0f172a;
-    }
-    [data-testid="stSidebar"] > div:first-child {
-        background-color: #0f172a !important;
-    }
-    .stSidebar .sidebar-content {
-        background-color: rgba(15, 23, 42, 0.9) !important;
-        backdrop-filter: blur(5px);
-    }
-    .stFileUploader {
-        background-color: #1e293b !important;
-        border-radius: 10px !important;
-        padding: 20px !important;
-    }
-    .stButton>button {
-        background-color: #3b82f6 !important;
-        border: none !important;
-    }
-</style>
-"""
-st.markdown(custom_css, unsafe_allow_html=True)
-
-# --- Session State Management ---
+# --- Core Functions ---
 def initialize_session_state():
     """Initialize all session state variables"""
     if "chat_history" not in st.session_state:
@@ -84,7 +55,6 @@ def initialize_session_state():
     if "theme" not in st.session_state:
         st.session_state.theme = "dark"
 
-# --- API Key Validation ---
 def validate_api_keys():
     """Validate required API keys"""
     required_keys = {
@@ -101,11 +71,9 @@ def validate_api_keys():
         st.error(f"Missing required API keys: {', '.join(missing_keys)}")
         st.stop()
     
-    # Set environment variables
     os.environ["GOOGLE_API_KEY"] = get_secret("GOOGLE_API_KEY")
     os.environ["GROQ_API_KEY"] = get_secret("GROQ_API_KEY")
 
-# --- Document Processing ---
 def process_uploaded_files(uploaded_files: List) -> bool:
     """Process PDF files and create vector store"""
     try:
@@ -148,7 +116,6 @@ def process_uploaded_files(uploaded_files: List) -> bool:
     finally:
         st.session_state.processing_docs = False
 
-# --- Chat Functionality ---
 def generate_response(user_question: str) -> Tuple[Optional[str], Optional[str]]:
     """Generate AI response using RAG pipeline"""
     try:
@@ -193,8 +160,30 @@ def render_chat_history():
 
 # --- Main App ---
 def main():
+    # Initialize app
+    st.set_page_config(
+        page_title="Document Intelligence Assistant",
+        layout="wide",
+        page_icon="📘",
+        initial_sidebar_state="expanded"
+    )
+    
+    # Apply custom CSS
+    st.markdown("""
+    <style>
+        .stApp { background-color: #0f172a; }
+        [data-testid="stSidebar"] > div:first-child { background-color: #0f172a !important; }
+        .stSidebar .sidebar-content { background-color: rgba(15, 23, 42, 0.9) !important; }
+        .stFileUploader { background-color: #1e293b !important; border-radius: 10px !important; }
+        .stButton>button { background-color: #3b82f6 !important; border: none !important; }
+    </style>
+    """, unsafe_allow_html=True)
+    
     initialize_session_state()
     validate_api_keys()
+    
+    # Load animation
+    animation = load_lottie(LOTTIE_URL)
     
     # Sidebar
     with st.sidebar:
@@ -243,8 +232,6 @@ def main():
     # Main content
     st.title("📘 Document Intelligence Assistant")
     
-    # Load animation
-    animation = load_lottie(LOTTIE_URL)
     if animation:
         st_lottie(animation, speed=1, height=200)
     
@@ -261,4 +248,5 @@ def main():
                     st.rerun()
 
 if __name__ == "__main__":
+    load_dotenv()
     main()
