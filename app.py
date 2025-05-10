@@ -13,283 +13,234 @@ from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from streamlit_lottie import st_lottie
 import requests
 import markdown2
+from typing import List, Tuple, Optional
+
+# Constants
+LOTTIE_URL = "https://lottie.host/f1216edb-4e09-46e5-8f1e-90c367b6fc13/iM4N0EXuvy.json"
+TEMP_FOLDER = "./uploaded_pdfs"
+DEFAULT_MODEL = "gemma2-9b-it"
 
 # Initialize Streamlit page config
-st.set_page_config(page_title="📘 Gemma Document Q&A", layout="wide", page_icon="📘")
+st.set_page_config(
+    page_title="📘 Gemma Document Q&A",
+    layout="wide",
+    page_icon="📘",
+    initial_sidebar_state="expanded"
+)
 
-@st.cache_data
-def load_lottie_url(url):
-    res = requests.get(url)
-    if res.status_code == 200:
-        return res.json()
-    return None
+@st.cache_data(show_spinner=False)
+def load_lottie(url: str) -> Optional[dict]:
+    """Load Lottie animation from URL"""
+    try:
+        res = requests.get(url, timeout=10)
+        return res.json() if res.status_code == 200 else None
+    except Exception:
+        return None
 
-# Load animation
-animation = load_lottie_url("https://lottie.host/f1216edb-4e09-46e5-8f1e-90c367b6fc13/iM4N0EXuvy.json")
-
-# --- API KEY HANDLING ---
-def initialize_groq_api_key():
-    """Handle Groq API key from either secrets or user input"""
-    # Check for user-provided API key first
-    user_api_key = st.session_state.get('user_groq_api_key')
-    
-    if user_api_key:
-        os.environ['GROQ_API_KEY'] = user_api_key
-        return True
-    
-    # Fall back to secrets if available
-    if 'GROQ_API_KEY' in st.secrets:
-        os.environ['GROQ_API_KEY'] = st.secrets['GROQ_API_KEY']
-        return True
-    
-    return False
-
-def check_google_api_key():
-    """Verify Google API key is present"""
-    if 'GOOGLE_API_KEY' not in st.secrets:
-        st.error("Missing Google API key in secrets")
-        return False
-    os.environ['GOOGLE_API_KEY'] = st.secrets['GOOGLE_API_KEY']
-    return True
-
-# --- UI THEMING ---
-selected_theme = st.sidebar.radio("🎨 Select Theme", ["Dark", "Light"])
-theme_css = """
-.main { background-color: %s; color: %s; }
-.stTextInput>div>div>input, .stTextArea>div>textarea {
-    background-color: %s;
-    color: %s;
-    border: 1px solid #3b82f6;
-    border-radius: 10px;
-}
-"""
-theme_config = {
-    "Dark": {
-        "bg": "#0f172a",
-        "text": "#f1f5f9",
-        "input_bg": "#1e293b",
-        "input_text": "white"
-    },
-    "Light": {
-        "bg": "#f4f4f5",
-        "text": "#111827",
-        "input_bg": "#ffffff",
-        "input_text": "#111827"
+def initialize_session_state():
+    """Initialize all session state variables"""
+    defaults = {
+        "chat_history": [],
+        "vectors": None,
+        "embeddings": None,
+        "user_groq_api_key": "",
+        "processing_docs": False
     }
-}
+    for key, value in defaults.items():
+        if key not in st.session_state:
+            st.session_state[key] = value
 
-current_theme = theme_config[selected_theme]
-st.markdown(f"""
-<style>
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap');
-html, body, [class*="css"] {{ font-family: 'Inter', sans-serif; }}
-{theme_css % (
-    current_theme['bg'],
-    current_theme['text'],
-    current_theme['input_bg'],
-    current_theme['input_text']
-)}
-.stButton>button {{
-    background-color: #3b82f6;
-    color: white;
-    border-radius: 10px;
-    padding: 10px;
-    transition: 0.3s ease-in-out;
-}}
-.stButton>button:hover {{
-    background-color: #2563eb;
-    transform: scale(1.05);
-}}
-.stMarkdown h1, h2, h3 {{ color: #38bdf8; }}
-.uploadedFileName {{ color: #a5f3fc; }}
-.chat-container {{
-    max-height: 400px;
-    overflow-y: auto;
-    border: 1px solid #3b82f6;
-    padding: 10px;
-    border-radius: 10px;
-    background-color: #1e293b;
-    margin-bottom: 1rem;
-}}
-.chat-bubble {{
-    border-radius: 12px;
-    padding: 10px 15px;
-    margin: 8px 0;
-    width: fit-content;
-    max-width: 85%;
-}}
-.user-bubble {{
-    background-color: #3b82f6;
-    color: white;
-    align-self: flex-end;
-    margin-left: auto;
-}}
-.bot-bubble {{
-    background-color: #0f172a;
-    color: white;
-    align-self: flex-start;
-}}
-.timestamp {{
-    font-size: 11px;
-    color: #9ca3af;
-    margin-top: 4px;
-    margin-bottom: 6px;
-    text-align: right;
-}}
-</style>
-""", unsafe_allow_html=True)
+def setup_environment():
+    """Configure API keys and environment variables"""
+    # Check Google API key (required)
+    if 'GOOGLE_API_KEY' not in st.secrets:
+        st.error("❌ Missing Google API key in secrets.toml")
+        st.stop()
+    os.environ['GOOGLE_API_KEY'] = st.secrets['GOOGLE_API_KEY']
 
-if animation:
-    st_lottie(animation, speed=1, height=220, key="header_anim")
-
-# --- MAIN APP ---
-st.title("🧠 Gemma PDF Analyzer")
-st.markdown("Upload your PDFs, build a smart document database, and chat interactively with **Gemma**.")
-
-# Initialize session state
-if "chat_history" not in st.session_state:
-    st.session_state.chat_history = []
-
-if "vectors" not in st.session_state:
-    st.session_state.vectors = None
-
-# Sidebar controls
-st.sidebar.header("🔑 API Configuration")
-# Groq API key input (will override secrets if provided)
-user_groq_api = st.sidebar.text_input(
-    "Enter your Groq API Key (optional):",
-    type="password",
-    key="user_groq_api_key",
-    help="Leave empty to use the default key from secrets"
-)
-
-# Verify API keys
-if not initialize_groq_api_key():
-    st.sidebar.error("Please provide a Groq API key")
-    st.stop()
-
-if not check_google_api_key():
-    st.stop()
-
-st.sidebar.header("📄 Upload PDFs")
-uploaded_files = st.sidebar.file_uploader(
-    "Choose your PDFs", 
-    type=["pdf"], 
-    accept_multiple_files=True,
-    key="pdf_uploader"
-)
-
-if st.sidebar.button("🗑️ Clear Uploaded Files"):
-    if os.path.exists("./uploaded_pdfs"):
-        for f in os.listdir("./uploaded_pdfs"):
-            os.remove(os.path.join("./uploaded_pdfs", f))
-        st.sidebar.success("Uploaded files cleared!")
-        if "vectors" in st.session_state:
-            del st.session_state.vectors
-
-def vector_embedding():
-    if uploaded_files:
-        try:
-            st.session_state.embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
-            temp_folder = "./uploaded_pdfs"
-            os.makedirs(temp_folder, exist_ok=True)
-            
-            with st.spinner("Processing PDFs..."):
-                progress = st.progress(0)
-                for i, uploaded_file in enumerate(uploaded_files):
-                    with open(os.path.join(temp_folder, uploaded_file.name), "wb") as f:
-                        f.write(uploaded_file.getvalue())
-                    progress.progress((i + 1) / len(uploaded_files))
-                
-                docs = []
-                for f in os.listdir(temp_folder):
-                    loader = PyPDFLoader(os.path.join(temp_folder, f))
-                    docs.extend(loader.load())
-                
-                if not docs:
-                    st.error("No text could be extracted from the PDF files.")
-                    return
-                
-                text_splitter = RecursiveCharacterTextSplitter(
-                    chunk_size=1000,
-                    chunk_overlap=200
-                )
-                final_documents = text_splitter.split_documents(docs)
-                
-                if not final_documents:
-                    st.error("Document splitting failed. Try different files.")
-                    return
-                
-                st.session_state.vectors = FAISS.from_documents(
-                    final_documents, 
-                    st.session_state.embeddings
-                )
-                st.toast("🎉 Knowledge base ready to use!", icon="📚")
-                st.sidebar.success("✅ PDFs processed and vector DB ready!")
-        except Exception as e:
-            st.error(f"Error processing documents: {str(e)}")
-
-if st.sidebar.button("📌 Build Knowledge Base"):
-    vector_embedding()
-
-# Chat interface
-st.subheader("💬 Chat with your PDFs")
-
-st.markdown("<div class='chat-container'>", unsafe_allow_html=True)
-if st.session_state.chat_history:
-    for q, a, t in reversed(st.session_state.chat_history):
-        st.markdown(f"""
-        <div class='chat-bubble user-bubble'>
-            <strong>You:</strong><br>{q}<div class='timestamp'>{t}</div>
-        </div>
-        <div class='chat-bubble bot-bubble'>
-            <strong>Gemma:</strong><br>{markdown2.markdown(a)}<div class='timestamp'>{t}</div>
-        </div>
-        """, unsafe_allow_html=True)
-        st.markdown("<script>window.scrollTo(0, document.body.scrollHeight);</script>", unsafe_allow_html=True)
-        
-st.markdown("</div>", unsafe_allow_html=True)
-
-user_question = st.text_input("Ask another question:", key="chat_input")
-
-if st.button("💡 Send") and user_question:
-    if st.session_state.vectors is None:
-        st.warning("Please build the knowledge base first!")
+    # Check Groq API key (user input or secrets)
+    if st.session_state.user_groq_api_key:
+        os.environ['GROQ_API_KEY'] = st.session_state.user_groq_api_key
+    elif 'GROQ_API_KEY' in st.secrets:
+        os.environ['GROQ_API_KEY'] = st.secrets['GROQ_API_KEY']
     else:
-        with st.spinner("Gemma is generating a response..."):
-            try:
-                llm = ChatGroq(
-                    groq_api_key=os.environ['GROQ_API_KEY'],
-                    model_name="gemma2-9b-it",
-                    temperature=0.3
-                )
-                
-                prompt = ChatPromptTemplate.from_template(
-                    """Answer the questions based on the provided context only.
-                    Please provide the most accurate response based on the question.
-                    <context>
-                    {context}
-                    </context>
-                    Question: {input}"""
-                )
-                
-                start = time.time()
-                document_chain = create_stuff_documents_chain(llm, prompt)
-                retriever = st.session_state.vectors.as_retriever()
-                retrieval_chain = create_retrieval_chain(retriever, document_chain)
-                response = retrieval_chain.invoke({"input": user_question})
-                end = time.time()
-                
-                st.session_state.chat_history.append((
-                    user_question,
-                    response['answer'],
-                    datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                ))
-                st.experimental_rerun()
-            except Exception as e:
-                st.error(f"Error generating response: {str(e)}")
+        st.error("🔑 Please provide a Groq API key in the sidebar")
+        st.stop()
 
-st.markdown("""
----
-<p style='text-align: center; font-size: 14px;'>Built with 💙 using LangChain + Gemini + Streamlit</p>
-""", unsafe_allow_html=True)
+def apply_custom_styling():
+    """Apply custom CSS styling"""
+    st.markdown("""
+    <style>
+    /* Modern styling */
+    .stTextInput>div>div>input, .stTextArea>div>textarea {
+        border-radius: 12px !important;
+        padding: 12px !important;
+    }
+    .stButton>button {
+        border-radius: 12px !important;
+        padding: 12px 24px !important;
+        transition: all 0.3s ease !important;
+    }
+    .stButton>button:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+    }
+    [data-testid="stSidebar"] {
+        background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+    }
+    </style>
+    """, unsafe_allow_html=True)
+
+def process_uploaded_files(uploaded_files: List) -> bool:
+    """Process PDF files and create vector store"""
+    try:
+        st.session_state.processing_docs = True
+        st.session_state.embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
+        
+        # Create temp directory if needed
+        os.makedirs(TEMP_FOLDER, exist_ok=True)
+        
+        # Save and load PDFs
+        docs = []
+        progress_bar = st.progress(0)
+        for i, uploaded_file in enumerate(uploaded_files):
+            with open(os.path.join(TEMP_FOLDER, uploaded_file.name), "wb") as f:
+                f.write(uploaded_file.getbuffer())
+            
+            loader = PyPDFLoader(os.path.join(TEMP_FOLDER, uploaded_file.name))
+            docs.extend(loader.load())
+            progress_bar.progress((i + 1) / len(uploaded_files))
+        
+        if not docs:
+            st.error("No text could be extracted from the PDF files")
+            return False
+        
+        # Split and vectorize documents
+        text_splitter = RecursiveCharacterTextSplitter(
+            chunk_size=1000,
+            chunk_overlap=200
+        )
+        final_documents = text_splitter.split_documents(docs)
+        
+        st.session_state.vectors = FAISS.from_documents(
+            final_documents, 
+            st.session_state.embeddings
+        )
+        return True
+        
+    except Exception as e:
+        st.error(f"Document processing failed: {str(e)}")
+        return False
+    finally:
+        st.session_state.processing_docs = False
+        if 'progress_bar' in locals():
+            progress_bar.empty()
+
+def generate_response(user_question: str) -> Tuple[str, str]:
+    """Generate AI response using RAG pipeline"""
+    try:
+        llm = ChatGroq(
+            groq_api_key=os.environ['GROQ_API_KEY'],
+            model_name=DEFAULT_MODEL,
+            temperature=0.3
+        )
+        
+        prompt = ChatPromptTemplate.from_template(
+            """Answer the question based only on the provided context:
+            
+            Context:
+            {context}
+            
+            Question: {input}
+            
+            Provide a concise, accurate response. If unsure, say "I couldn't find 
+            that information in the documents"."""
+        )
+        
+        document_chain = create_stuff_documents_chain(llm, prompt)
+        retriever = st.session_state.vectors.as_retriever()
+        retrieval_chain = create_retrieval_chain(retriever, document_chain)
+        
+        response = retrieval_chain.invoke({"input": user_question})
+        return response['answer'], datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        
+    except Exception as e:
+        st.error(f"AI response generation failed: {str(e)}")
+        return None, None
+
+def render_chat_history():
+    """Display the chat conversation"""
+    with st.container(height=500, border=True):
+        for q, a, t in st.session_state.chat_history:
+            st.chat_message("human").markdown(f"**You**: {q}")
+            st.chat_message("ai").markdown(f"**Gemma**: {markdown2.markdown(a)}")
+            st.caption(f"🕒 {t}")
+            st.divider()
+
+def main():
+    # Initialize app
+    initialize_session_state()
+    animation = load_lottie(LOTTIE_URL)
+    
+    # Sidebar configuration
+    with st.sidebar:
+        st.title("Configuration")
+        
+        # API Key Section
+        with st.expander("🔐 API Settings", expanded=True):
+            st.session_state.user_groq_api_key = st.text_input(
+                "Groq API Key",
+                type="password",
+                help="Get your key from https://console.groq.com/keys"
+            )
+        
+        # Document Upload Section
+        with st.expander("📄 Document Upload", expanded=True):
+            uploaded_files = st.file_uploader(
+                "Upload PDFs",
+                type=["pdf"],
+                accept_multiple_files=True,
+                disabled=st.session_state.processing_docs
+            )
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                if st.button("Process Documents", disabled=not uploaded_files):
+                    if process_uploaded_files(uploaded_files):
+                        st.success("Knowledge base created!")
+            
+            with col2:
+                if st.button("Clear Cache", type="secondary"):
+                    st.session_state.vectors = None
+                    if os.path.exists(TEMP_FOLDER):
+                        for f in os.listdir(TEMP_FOLDER):
+                            os.remove(os.path.join(TEMP_FOLDER, f))
+                    st.rerun()
+    
+    # Main content area
+    st.title("📘 Document Intelligence Assistant")
+    st.caption("Chat with your documents using Groq's lightning-fast AI")
+    
+    if animation:
+        st_lottie(animation, speed=1, height=200)
+    
+    # Setup environment (checks API keys)
+    setup_environment()
+    
+    # Chat interface
+    render_chat_history()
+    
+    # User input
+    if prompt := st.chat_input("Ask about your documents..."):
+        if not st.session_state.vectors:
+            st.warning("Please upload and process documents first")
+        else:
+            with st.spinner("Generating response..."):
+                answer, timestamp = generate_response(prompt)
+                if answer:
+                    st.session_state.chat_history.append((prompt, answer, timestamp))
+                    st.rerun()
+
+if __name__ == "__main__":
+    apply_custom_styling()
+    main()
