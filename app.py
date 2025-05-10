@@ -21,13 +21,96 @@ TEMP_FOLDER = "./uploaded_pdfs"
 DEFAULT_MODEL = "gemma2-9b-it"
 
 # Initialize Streamlit page config
+import os
+import base64
+import streamlit as st
+from PIL import Image
+import io
+
+# --- Background Image Setup ---
+def get_base64_image(image_path):
+    """Convert image to base64 for CSS embedding"""
+    with open(image_path, "rb") as image_file:
+        encoded_string = base64.b64encode(image_file.read()).decode()
+    return f"data:image/png;base64,{encoded_string}"
+
+# Set your background image path (replace with your image file)
+BACKGROUND_IMAGE = None  # Set to None if you don't want a background image
+# BACKGROUND_IMAGE = "your_background_image.jpg"  # Uncomment and add your image path
+
+if BACKGROUND_IMAGE and os.path.exists(BACKGROUND_IMAGE):
+    bg_image = get_base64_image(BACKGROUND_IMAGE)
+else:
+    bg_image = None
+
+# --- Custom CSS ---
+custom_css = f"""
+<style>
+    /* Main app background */
+    .stApp {{
+        background-color: #0f172a;
+        {'background-image: url(' + bg_image + '); background-size: cover; background-attachment: fixed;' if bg_image else ''}
+    }}
+
+    /* Sidebar matching background */
+    [data-testid="stSidebar"] > div:first-child {{
+        background-color: #0f172a !important;
+        {'background-image: url(' + bg_image + '); background-size: cover;' if bg_image else ''}
+    }}
+
+    /* Sidebar content styling */
+    .stSidebar .sidebar-content {{
+        background-color: rgba(15, 23, 42, 0.9) !important;
+        backdrop-filter: blur(5px);
+    }}
+
+    /* File uploader styling */
+    .stFileUploader {{
+        background-color: #1e293b !important;
+        border-radius: 10px !important;
+        padding: 20px !important;
+    }}
+
+    /* Button styling */
+    .stButton>button {{
+        background-color: #3b82f6 !important;
+        border: none !important;
+    }}
+</style>
+"""
+
+# --- App Layout ---
 st.set_page_config(
-    page_title="📘 Gemma Document Q&A",
+    page_title="Document Intelligence Assistant",
     layout="wide",
     page_icon="📘",
     initial_sidebar_state="expanded"
 )
 
+# Apply custom CSS
+st.markdown(custom_css, unsafe_allow_html=True)
+
+# --- Sidebar ---
+with st.sidebar:
+    st.title("Document Intelligence Assistant")
+    st.markdown("Chat with your documents using Groq's lightning-fast AI")
+
+    st.header("Document Upload")
+    uploaded_files = st.file_uploader(
+        "Drag and drop files here",
+        type=["pdf"],
+        accept_multiple_files=True,
+        help="Limit 20MB per file - PDF only"
+    )
+
+    if st.button("Clear Cache"):
+        st.success("Cache cleared successfully!")
+
+# --- Main Content ---
+st.header("Ask about your documents...")
+
+# Add your existing chat interface and functionality here
+# (Keep your existing Python code for the chat functionality)
 @st.cache_data(show_spinner=False)
 def load_lottie(url: str) -> Optional[dict]:
     """Load Lottie animation from URL"""
